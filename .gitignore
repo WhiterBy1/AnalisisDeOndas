@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 .vscode/
+
+generated_sounds/
 # C extensions
 *.so
 
