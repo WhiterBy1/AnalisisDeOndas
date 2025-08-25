@@ -56,7 +56,7 @@ pip install -r requirements.txt
 
 3. **Ejecuta la aplicación**:
 ```bash
-python audio_spectrometer.py
+python ProyectodeFFT.py
 ```
 
 ## Uso de la Aplicación
@@ -137,7 +137,6 @@ Este proyecto está bajo la Licencia MIT. Ver el archivo `LICENSE` para más det
 ##  Contacto
 
 Para preguntas, sugerencias o reportes de bugs, puedes contactar a través de:
-- Email: tu-email@ejemplo.com
 - Issues: [GitHub Issues](https://github.com/tu-usuario/audio-spectrometer/issues)
 
 ##  Agradecimientos
