@@ -3,6 +3,8 @@ from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.widgets import RectangleSelector
+import matplotlib.patches as patches
 import pyaudio
 import threading
 from collections import deque
@@ -34,6 +36,13 @@ class AudioSpectrometer:
         self.freq_data = None
         self.magnitude_data = None
         self.sample_times = None
+        
+        # Variables para zoom interactivo
+        self.zoom_start = 0.0
+        self.zoom_end = 0.05
+        self.rectangle_selector = None
+        self.zoom_rectangle = None
+        self.interactive_zoom_enabled = False
         
         # Diccionario de notas musicales con nombres en español
         self.notes = {
@@ -108,6 +117,23 @@ class AudioSpectrometer:
         self.save_button = ttk.Button(control_row2, text="Guardar Gráficas", command=self.save_plots, state=tk.DISABLED)
         self.save_button.pack(side=tk.LEFT, padx=(0, 10))
         
+        # Tercera fila - Controles de zoom interactivo
+        control_row3 = ttk.Frame(control_frame)
+        control_row3.pack(fill=tk.X, pady=(5, 0))
+
+        self.enable_zoom_button = ttk.Button(control_row3, text="🔍 Activar Zoom Interactivo", 
+                                            command=self.toggle_interactive_zoom, state=tk.DISABLED)
+        self.enable_zoom_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.reset_zoom_button = ttk.Button(control_row3, text="↻ Reset Zoom", 
+                                           command=self.reset_zoom_view, state=tk.DISABLED)
+        self.reset_zoom_button.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Mostrar información de la selección
+        self.zoom_info_label = tk.Label(control_row3, text="Selección: No activa", 
+                                       font=("Arial", 10), bg='#95a5a6', fg='black')
+        self.zoom_info_label.pack(side=tk.LEFT, padx=(10, 0))
+        
         # Frame de información y resultados
         info_frame = ttk.LabelFrame(main_frame, text="Resultados del Análisis", padding=10)
         info_frame.pack(fill=tk.X, pady=(0, 10))
@@ -158,7 +184,105 @@ class AudioSpectrometer:
         
         # Crear las gráficas
         self.setup_plots(main_frame)
+    
+    def toggle_interactive_zoom(self):
+        """Activa o desactiva el zoom interactivo"""
+        if not self.interactive_zoom_enabled:
+            self.enable_interactive_selection()
+            self.enable_zoom_button.config(text="❌ Desactivar Zoom")
+            self.zoom_info_label.config(text="Zoom activo - Arrastra en la gráfica superior", bg='#2ecc71')
+            self.interactive_zoom_enabled = True
+        else:
+            self.disable_interactive_selection()
+            self.enable_zoom_button.config(text="🔍 Activar Zoom Interactivo")
+            self.zoom_info_label.config(text="Selección: No activa", bg='#95a5a6')
+            self.interactive_zoom_enabled = False
+    
+    def enable_interactive_selection(self):
+        """Habilita la selección interactiva en la primera gráfica"""
+        if self.rectangle_selector:
+            self.rectangle_selector.set_active(False)
+
+        # Crear selector de rectángulo en la primera gráfica (versión compatible)
+        self.rectangle_selector = RectangleSelector(
+            self.ax1,
+            self.on_rectangle_select,
+            useblit=True,
+            button=[1],  # Solo botón izquierdo del mouse
+            minspanx=0.001,  # Selección mínima de 1ms
+            minspany=0,
+            spancoords='data',
+            interactive=True
+        )
+
+        # Configurar propiedades del rectángulo después de crearlo
+        try:
+            # Para versiones más nuevas de matplotlib
+            self.rectangle_selector.props.update({
+                'facecolor': 'yellow',
+                'alpha': 0.3,
+                'edgecolor': 'red',
+                'linewidth': 2
+            })
+        except AttributeError:
+            # Para versiones más antiguas, usar set_props si está disponible
+            try:
+                self.rectangle_selector.set_props(
+                    facecolor='yellow',
+                    alpha=0.3,
+                    edgecolor='red',
+                    linewidth=2
+                )
+            except AttributeError:
+                # Si no hay método disponible, usar el rectángulo por defecto
+                pass
+            
+        # Conectar eventos del mouse
+        self.canvas.mpl_connect('button_press_event', self.on_mouse_press)
+        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+
+
+        self.rectangle_selector.set_active(True)
+    
+    def disable_interactive_selection(self):
+        """Deshabilita la selección interactiva"""
+        if self.rectangle_selector:
+            self.rectangle_selector.set_active(False)
+            self.rectangle_selector = None
+
+        # Limpiar el rectángulo de selección visual
+        if self.zoom_rectangle:
+            self.zoom_rectangle.remove()
+            self.zoom_rectangle = None
+            self.canvas.draw()
+    
+    def on_rectangle_select(self, eclick, erelease):
+        """Callback cuando el usuario selecciona una región con el mouse"""
+        # Obtener coordenadas de la selección
+        x1, x2 = sorted([eclick.xdata, erelease.xdata])
         
+        # Validar que la selección esté dentro del rango de datos
+        total_duration = len(self.time_data) / self.RATE if self.time_data is not None else 0
+        
+        if x1 < 0:
+            x1 = 0
+        if x2 > total_duration:
+            x2 = total_duration
+        
+        # Actualizar variables de zoom
+        self.zoom_start = x1
+        self.zoom_end = x2
+        zoom_duration = x2 - x1
+        
+        # Actualizar la información de selección
+        self.zoom_info_label.config(
+            text=f"Selección: {x1:.3f}s - {x2:.3f}s ({zoom_duration:.3f}s)",
+            bg='#3498db'
+        )
+        
+        # Actualizar automáticamente la segunda gráfica
+        self.update_zoom_plot_interactive()
+    
     def setup_plots(self, parent):
         # Frame para las gráficas
         plot_frame = ttk.Frame(parent)
@@ -232,6 +356,108 @@ class AudioSpectrometer:
         self.recorded_data.extend(audio_data)
         return (in_data, pyaudio.paContinue)
     
+    def on_mouse_press(self, event):
+        """Maneja el evento de presión del mouse"""
+        if event.inaxes == self.ax1 and self.interactive_zoom_enabled:
+            self.zoom_info_label.config(text="Arrastrando selección...", bg='#f39c12')
+
+    def on_mouse_move(self, event):
+        """Maneja el movimiento del mouse"""
+        if (event.inaxes == self.ax1 and self.interactive_zoom_enabled and 
+            hasattr(event, 'button') and event.button == 1):
+            # Mostrar coordenadas en tiempo real
+            if event.xdata is not None:
+                self.zoom_info_label.config(
+                    text=f"Posición: {event.xdata:.3f}s",
+                    bg='#e67e22'
+                )
+    
+    def update_zoom_plot_interactive(self):
+        """Actualiza la segunda gráfica con la selección interactiva"""
+        if self.time_data is None:
+            return
+
+        # Limpiar la segunda gráfica
+        self.ax2.clear()
+        self.ax2.set_facecolor('#34495e')
+        self.ax2.tick_params(colors='white', labelsize=10)
+        self.ax2.grid(True, alpha=0.4, linewidth=0.8)
+        for spine in self.ax2.spines.values():
+            spine.set_edgecolor('white')
+            spine.set_linewidth(1.2)
+
+        # Calcular índices para la selección
+        start_idx = int(self.zoom_start * self.RATE)
+        end_idx = int(self.zoom_end * self.RATE)
+
+        # Validar índices
+        start_idx = max(0, start_idx)
+        end_idx = min(len(self.time_data), end_idx)
+
+        if end_idx <= start_idx:
+            end_idx = start_idx + int(0.01 * self.RATE)  # Mínimo 10ms
+
+        # Extraer datos del zoom
+        zoom_times = self.sample_times[start_idx:end_idx]
+        zoom_data = self.time_data[start_idx:end_idx]
+
+        if len(zoom_data) > 0:
+            # Graficar la selección
+            self.ax2.plot(zoom_times, zoom_data, 'lime', linewidth=2.5)
+            self.ax2.set_title(
+                f'Zoom Interactivo - {self.zoom_start:.3f}s a {self.zoom_end:.3f}s', 
+                color='white', fontsize=14, fontweight='bold'
+            )
+            self.ax2.set_xlabel('Tiempo (s)', color='white', fontsize=12)
+            self.ax2.set_ylabel('Amplitud', color='white', fontsize=12)
+
+            # Marcar períodos en la selección
+            if hasattr(self, 'period') and self.period > 0:
+                current_time = self.zoom_start
+                period_count = 0
+
+                while current_time < self.zoom_end and period_count < 20:  # Máximo 20 marcas
+                    period_time = self.zoom_start + (period_count * self.period)
+                    if period_time <= self.zoom_end:
+                        self.ax2.axvline(x=period_time, color='red', linestyle='--', 
+                                       linewidth=2, alpha=0.8)
+
+                        # Añadir etiqueta cada pocos períodos para no saturar
+                        if period_count % 2 == 0:
+                            self.ax2.text(period_time, np.max(zoom_data) * 0.9, 
+                                        f'T={self.period:.4f}s', rotation=90, 
+                                        color='red', fontsize=9, fontweight='bold')
+
+                        period_count += 1
+                    else:
+                        break
+                    
+            # Redibujar canvas
+            self.canvas.draw()
+
+    def reset_zoom_view(self):
+        """Resetea el zoom a la vista original"""
+        if self.time_data is None:
+            return
+
+        # Resetear valores
+        self.zoom_start = 0.0
+        total_duration = len(self.time_data) / self.RATE
+        self.zoom_end = min(0.05, total_duration)
+
+        # Actualizar información
+        self.zoom_info_label.config(
+            text=f"Reset - Mostrando: 0.000s - {self.zoom_end:.3f}s",
+            bg='#9b59b6'
+        )
+
+        # Actualizar gráfica
+        self.update_zoom_plot_interactive()
+
+        # Limpiar selector visual
+        if self.rectangle_selector:
+            self.rectangle_selector.clear()
+
     def start_recording(self):
         """Inicia la grabación de audio"""
         try:
@@ -300,10 +526,19 @@ class AudioSpectrometer:
         # Actualizar gráficas
         self.update_plots()
         
+        
+        
         # Habilitar guardar
         self.save_button.config(state=tk.NORMAL)
         
         self.status_label.config(text="Análisis completado")
+        
+         # Habilitar controles de zoom interactivo
+        self.save_button.config(state=tk.NORMAL)
+        self.enable_zoom_button.config(state=tk.NORMAL)
+        self.reset_zoom_button.config(state=tk.NORMAL)
+        
+        self.status_label.config(text="Análisis completado - Zoom interactivo disponible")
     
     def analyze_temporal_properties(self):
         """Analiza las propiedades temporales de la señal"""
@@ -420,7 +655,7 @@ class AudioSpectrometer:
         self.ax1.set_ylabel('Amplitud', color='white', fontsize=12)
         
         # Gráfica 2: Zoom para medir período (primeros 0.05 segundos o 3 períodos)
-        zoom_duration = min(0.05, 3 * self.period if self.period > 0 else 0.05)
+        zoom_duration = 0.005
         zoom_samples = int(zoom_duration * self.RATE)
         zoom_times = self.sample_times[:zoom_samples]
         zoom_data = self.time_data[:zoom_samples]
@@ -598,6 +833,11 @@ class AudioSpectrometer:
         """Maneja el cierre de la aplicación"""
         if self.is_recording:
             self.stop_recording()
+            
+        # Limpiar selector interactivo
+        if self.rectangle_selector:
+            self.rectangle_selector.set_active(False)    
+            
         if hasattr(self, 'audio'):
             self.audio.terminate()
         self.root.destroy()
