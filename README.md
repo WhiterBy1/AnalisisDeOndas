@@ -1,5 +1,7 @@
 # 🎵 AnalisisDeOndas - Registro y Análisis de Ondas Sonoras
-<img src="\img\ParaPDF.png "/>
+<img src="\img\ParaPDF.png "/><sub>Figura 1: Datos Obtenidos de un piano</sub><br>
+<br>
+
 Una aplicación de escritorio desarrollada en Python para el registro, análisis y visualización de ondas sonoras. Diseñada especialmente para el estudio de física de ondas y acústica.
 
 ## Características
